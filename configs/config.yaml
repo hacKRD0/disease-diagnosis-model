@@ -1,0 +1,4 @@
+defaults:
+  - data: multimedqa
+  - model: llama2_3b
+  - training: finetune

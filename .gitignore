@@ -1,0 +1,17 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+
+# Virtual env
+.medi_env/
+
+# Data & outputs
+data/
+outputs/
+
+# Config and secrets
+.env
+
+# IDE/editor files
+.vscode/
+.idea/
