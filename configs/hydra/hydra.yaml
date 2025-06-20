@@ -1,0 +1,3 @@
+job:
+  # choose true to chdir into outputs/, false to stay in project root
+  chdir: false

@@ -1,4 +1,5 @@
 defaults:
-  - data: multimedqa
-  - model: llama2_3b
+  - hydra: hydra
+  - data: data
+  - model: smolLM_360M
   - training: finetune

@@ -1,0 +1,18 @@
+# configs/model/llama3-2_1b.yaml
+name: "llama3-2_1b"
+hf_checkpoint: "meta-llama/Llama-3.2-1B"   # Hugging Face model ID :contentReference[oaicite:0]{index=0}
+tokenizer_checkpoint: "meta-llama/Llama-3.2-1B"
+
+# PEFT / LoRA settings
+peft:
+  method: "lora"
+  r: 2                                   # LoRA rank :contentReference[oaicite:1]{index=1}
+  alpha: 16
+  dropout: 0.05
+  target_modules: ["q_proj","v_proj"]    # modules to apply LoRA :contentReference[oaicite:2]{index=2}
+  modules_to_save: ["lm_head"]
+
+# Model kwargs (passed to from_pretrained)
+model_kwargs:
+  torch_dtype: "auto"
+  device_map: "auto"
