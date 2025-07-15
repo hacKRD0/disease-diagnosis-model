@@ -42,11 +42,20 @@ def process_csv(csv_path: str, mapping: Dict[int, str], output_dir: str) -> None
 
     try:
         df["label"] = df["label"].map(lambda x: mapping[int(x)])
+        # Construct LLaMA-2 chat prompts
+        # df["prompt"] = (
+        #     "[s][INST] [[SYS]]\n"
+        #     "You are a medical diagnosis assistant.\n"
+        #     "[[/SYS]]\n\n"
+        #     "User: " + df["text"] + " [/INST] "
+        #     "Assistant: " + df["label"] + " [/s]"
+        # )
     except KeyError as missing:
         raise KeyError(f"Label ID {missing} in {csv_path} is not present in the mapping file") from None
 
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, os.path.basename(csv_path))
+    # df[["prompt"]].to_csv(output_path, index=False)
     df.to_csv(output_path, index=False)
     print(f"💾 Saved processed CSV to {output_path}")
 

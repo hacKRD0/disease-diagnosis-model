@@ -45,12 +45,36 @@ def main(cfg: DictConfig):
 
     # 3) Tokenize on-the-fly
     def tokenize_fn(batch):
-        inputs = ["Symptoms: " + x for x in batch["text"]]
-        targets = [f"Disease: {label}" for label in batch["label"]]
-        model_inputs = tokenizer(inputs, truncation=True, padding="longest")
-        labels = tokenizer(targets, truncation=True, padding="longest").input_ids
-        model_inputs["labels"] = labels
-        return model_inputs
+        """Prepare combined prompt+answer sequences and align labels.
+
+        Each example becomes:
+            "Symptoms: <symptom text>\n\nDisease: <disease> <eos>"
+        Prompt tokens are masked out in ``labels`` with ``-100`` so the loss is
+        only computed on the answer portion.
+        """
+        # Build prompt and answer strings
+        prompts = [f"Symptoms: {sym}\n\nDisease:" for sym in batch["text"]]
+        answers = [str(label) for label in batch["label"]]
+
+        # Full texts fed to the model
+        full_texts = [p + " " + a + tokenizer.eos_token for p, a in zip(prompts, answers)]
+        tokenized = tokenizer(full_texts, truncation=True, padding="longest")
+
+        # Construct labels that ignore (mask) the prompt part
+        labels = []
+        for p, a in zip(prompts, answers):
+            prompt_ids = tokenizer(p, add_special_tokens=False).input_ids
+            answer_ids = tokenizer(" " + a + tokenizer.eos_token, add_special_tokens=False).input_ids
+            labels.append([-100] * len(prompt_ids) + answer_ids)
+
+        # Left-pad labels to the max sequence length in this batch so labels
+        # shape matches ``input_ids``.
+        max_len = max(len(l) for l in labels)
+        for l in labels:
+            l += [-100] * (max_len - len(l))
+
+        tokenized["labels"] = labels
+        return tokenized
     tokenized = ds.map(tokenize_fn, batched=True, remove_columns=ds["train"].column_names)
     # tokenized.set_format("torch", columns=["input_ids", "attention_mask", "labels"])
 
@@ -75,7 +99,7 @@ def main(cfg: DictConfig):
         args=training_args,
         train_dataset=tokenized["train"],
         eval_dataset=tokenized["validation"],
-        processing_class=tokenizer,
+        tokenizer=tokenizer,
     )
 
     # batch = tokenized["train"][:2]
