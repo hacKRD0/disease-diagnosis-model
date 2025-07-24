@@ -1,142 +1,110 @@
-Below is a revised README tailored to your disease-diagnosis fine-tuning project using PEFT/LoRA and a Hugging Face symptoms–disease dataset:
+# Disease Diagnosis Fine-Tuning with DistilBERT
+
+This repository demonstrates **end-to-end fine-tuning of a small language model (e.g. `distilbert-base-uncased`) to predict medical diagnoses from free-text symptom descriptions**.  
+The workflow is intentionally lightweight – relying only on the HuggingFace ecosystem, [Hydra](https://github.com/facebookresearch/hydra) for configuration, and [LoRA](https://arxiv.org/abs/2106.09685) via `peft` for parameter-efficient training.
 
 ---
+## 1. Problem Statement
+* **Input**: A short natural-language description of a patient’s symptoms.
+* **Output**: The most probable disease / condition from a predefined label set.
 
-## Disease Diagnosis Chatbot
+Rather than training a bespoke classifier, we cast the task as *conditional language modelling*:
 
-A domain-specific conversational AI that assists medical practitioners and patients by interpreting symptom descriptions and suggesting likely diagnoses. Built by fine-tuning a pretrained language model with PEFT LoRA adapters on a Hugging Face dataset mapping symptoms to disease names.
+```
+Symptoms: <symptom text>
 
----
+Disease: <LABEL>
+```
 
-## Table of Contents
-
-1. [Features](#features)
-2. [Quick Start](#quick-start)
-3. [Project Structure](#project-structure)
-4. [Configuration](#configuration)
-5. [Training](#training)
-6. [Inference](#inference)
-7. [Notebooks](#notebooks)
-8. [Testing](#testing)
-9. [License](#license)
+During fine-tuning the model learns to generate the correct label after the `Disease:` prompt.
 
 ---
-
-## Features
-
-* **Data ingestion & preprocessing** (`src/ingestion/preprocess_symptoms.py`)
-* **PEFT LoRA fine-tuning** of a base LLM for symptom→disease mapping (`src/train.py`)
-* **Quantized model checkpoints** for efficient inference on CPU/GPU
-* **Interactive prediction** via a simple CLI or batch mode (`src/inference/predict.py`)
-* **Hydra-driven configs** to reproduce experiments (`configs/*`)
-* **Notebooks** covering EDA, baseline classification, and end-to-end training/quantization (`notebooks/*`)
+## 2. Repository Structure
+| Path | Purpose |
+|------|---------|
+| `data/raw/` | Original CSVs with numeric `label` ids. |
+| `data/processed/` | Cleaned CSVs with textual labels (produced by `preprocess_dataset.py`). |
+| `configs/` | Hydra ΩConf files holding all hyper-parameters. |
+| `src/ingestion/preprocess_dataset.py` | Converts numeric labels → text labels and saves processed CSVs. |
+| `src/train.py` | Finetunes the model using 🤗 **Trainer** + **LoRA**. |
+| `src/inference/generate_predictions.py` | Runs inference on the validation set and compares base vs finetuned accuracy. |
 
 ---
+## 3. Quickstart
+### 3.1 Environment
+```bash
+# Python ≥3.9 recommended
+python -m venv .venv && source .venv/bin/activate  # Windows: .venv\Scripts\activate
 
-## Quick Start
+pip install -r requirements.txt  # or install the packages below
+```
+Minimal dependencies:
+```
+transformers datasets peft accelerate hydra-core pandas scikit-learn
+```
+
+### 3.2 Data Preparation
+Place your raw CSVs in `data/raw/` with **two columns**:
+* `text`  – symptom description (string)
+* `label` – integer class id
+
+Create `data/label_mapping.json` mapping **disease → id** (the script will invert it).
 
 ```bash
-# 1. Clone the repo
-$ git clone https://github.com/<your-org>/disease-diagnosis-chatbot.git
-$ cd disease-diagnosis-chatbot
-
-# 2. Create and activate a virtual environment
-$ python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
-
-# 3. Install dependencies
-(venv) $ pip install -r requirements.txt
-
-# 4. Copy and fill in env vars
-(venv) $ cp .env.example .env
+python -m src.ingestion.preprocess_dataset \ 
+  --train_csv data/raw/symptom-disease-train-dataset.csv \ 
+  --val_csv   data/raw/symptom-disease-test-dataset.csv  \ 
+  --mapping_file data/label_mapping.json
 ```
 
----
+`data/processed/` will now contain cleaned train/validation CSVs with textual labels.
 
-## Project Structure
-
-```
-disease-diagnosis-chatbot/
-├── configs/              # Hydra configurations
-├── data/                 # Raw + processed symptom–disease data (gitignored)
-├── notebooks/            # Jupyter notebooks for analysis & walkthroughs
-├── src/
-│   ├── ingestion/        # Symptom data preprocessing
-│   ├── train.py          # PEFT LoRA fine-tuning script
-│   ├── inference/        # Prediction scripts
-│   ├── utils/            # Helper functions
-│   └── models/           # Saved model checkpoints (gitignored)
-├── tests/                # Unit & integration tests
-└── README.md
-```
-
----
-
-## Configuration
-
-All settings live under `configs/`. The default `config.yaml` merges data, model, and training sub-configs.
-Override via CLI, for example:
-
+### 3.3 Training
+Hyper-parameters live in `configs/config.yaml` (learning-rate, batch-size, LoRA rank, etc.).
+Simply run:
 ```bash
-python src/train.py \
-  model.base_model=bert-base-uncased \
-  training.max_steps=1000 \
-  data.train_path=data/processed/train.json
+python -m src.train
 ```
+Key details inside `src/train.py`:
+1. **Dataset loading** – HuggingFace `load_dataset("csv", data_files=...)`.
+2. **Prompt building** – `"Symptoms: {sym}\n\nDisease:"` (prompt) + `<label> <eos>` (answer).
+3. **Label masking** – tokens corresponding to the prompt are set to `-100` so loss is only computed on the answer.
+4. **Model** – loaded with `AutoModelForCausalLM.from_pretrained(cfg.model.hf_checkpoint)` (default can be DistilBERT or any causal model).
+5. **LoRA** – applied via `peft.get_peft_model` for memory-efficient fine-tuning.
+6. **Training** – 🤗 `Trainer` handles optimisation, evaluation, checkpointing.
 
----
+Outputs are stored in `outputs/` (configurable).
 
-## Training
-
-Fine-tune the pretrained LLM with PEFT/LoRA on the Hugging Face symptom-disease dataset:
-
+### 3.4 Inference & Evaluation
+After training, compare the base model vs the fine-tuned one:
 ```bash
-python src/train.py \
-  model.base_model=<pretrained-model> \
-  training.mode=finetune \
-  data.path=data/processed/train.parquet
+python -m src.inference.generate_predictions
 ```
-
-Key hyperparameters are defined in `configs/training/finetune.yaml`.
-
----
-
-## Inference
-
-Generate diagnoses in interactive or batch mode:
-
-```bash
-# Batch mode
-python src/inference/predict.py \
-  --checkpoint_path=models/quantized-loRA \
-  --input_file=data/user_symptoms.csv \
-  --output_file=outputs/predictions.csv
-
-# Interactive mode
-python src/inference/predict.py --interactive
-```
+This script:
+* Loads the **validation CSV** from `data/processed/`.
+* Builds the same prompt format and generates a label with both the *base* and *fine-tuned* pipelines.
+* Computes accuracy, confusion matrix, and a full classification report.
 
 ---
+## 4. Configuration Highlights (`configs/config.yaml`)
+| Field | Example | Meaning |
+|-------|---------|---------|
+| `model.hf_checkpoint` | `distilbert-base-uncased` | Starting HF model. |
+| `model.peft.r` | `8` | LoRA rank. |
+| `training.num_epochs` | `3` | Training epochs. |
+| `data.data_files.train` | `data/processed/symptom-disease-train-dataset.csv` | Training CSV. |
 
-## Notebooks
-
-| Notebook                                    | Description                                         |
-| ------------------------------------------- | --------------------------------------------------- |
-| `eda_symptoms.ipynb`                        | Exploratory data analysis of symptom–disease data   |
-| `baseline_classification.ipynb`             | Simple intent classifier baseline                   |
-| `finetune_lora_quantization_workflow.ipynb` | End-to-end fine-tuning & quantization demonstration |
-
----
-
-## Testing
-
-```bash
-pytest -q
-```
-
-(Add new unit tests under `tests/` to verify data pipelines, model outputs, and CLI behavior.)
+Edit these values to experiment with different models or batch sizes.
 
 ---
+## 5. Tips & Notes
+* **GPU**: Training DistilBERT with LoRA fits easily on a single 8 GB GPU.
+* **New labels**: Add the new disease name ↔ id to `label_mapping.json` and regenerate processed CSVs.
+* **Long inputs**: Increase `max_seq_length` in the tokenizer call if symptom texts are lengthy.
 
-## License
+---
+## 6. Acknowledgements
+* 🤗 **Transformers**, **Datasets**, **PEFT**
+* **Hydra** for elegant configuration management
 
-This project is released under the MIT License. See `LICENSE` for details.
+Happy experimenting! 🎉
